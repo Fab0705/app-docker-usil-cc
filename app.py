@@ -1,75 +1,92 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from typing import List, Optional
+import streamlit as st
+import pandas as pd
+import plotly.express as px
 from datetime import datetime
 
-# Configuración principal de la API
-app = FastAPI(
-    title="Gestor de Inventario API",
-    description="API para gestionar un catálogo de productos",
-    version="1.0.0"
+# Configuración de la página
+st.set_page_config(
+    page_title="Panel de Inventario",
+    page_icon="📦",
+    layout="wide"
 )
 
-# Modelo de datos usando Pydantic para validación
-class Producto(BaseModel):
-    id: Optional[int] = None
-    nombre: str
-    categoria: str
-    precio: float
-    stock: int
-    fecha_registro: Optional[datetime] = None
+st.title("📦 Panel de Control de Inventario")
+st.markdown("---")
 
-# Base de datos simulada (en memoria)
-inventario = [
-    Producto(id=1, nombre="Taza Blanca 11oz", categoria="Sublimación", precio=15.0, stock=50, fecha_registro=datetime.now()),
-    Producto(id=2, nombre="Pack de Regalo Personalizado", categoria="Packs", precio=45.0, stock=10, fecha_registro=datetime.now()),
-    Producto(id=3, nombre="Taza Mágica Negra", categoria="Sublimación", precio=25.0, stock=30, fecha_registro=datetime.now())
-]
+# Inicializar datos en la sesión para que sea interactivo
+if 'inventario' not in st.session_state:
+    st.session_state.inventario = pd.DataFrame({
+        'ID': [1, 2, 3, 4],
+        'Producto': ["Taza Blanca 11oz", "Pack de Regalo Personalizado", "Taza Mágica Negra", "Tomatodo de Aluminio"],
+        'Categoría': ["Sublimación", "Packs", "Sublimación", "Sublimación"],
+        'Precio (S/)': [15.0, 45.0, 25.0, 20.0],
+        'Stock': [50, 10, 30, 25]
+    })
 
-@app.get("/", tags=["Inicio"])
-def ruta_principal():
-    return {"mensaje": "Bienvenido al Sistema de Inventario", "estado": "Activo"}
+# --- BARRA LATERAL: Formulario para agregar productos ---
+st.sidebar.header("➕ Agregar Nuevo Producto")
+with st.sidebar.form("nuevo_producto"):
+    nombre = st.text_input("Nombre del producto")
+    categoria = st.selectbox("Categoría", ["Sublimación", "Packs", "Textil", "Otros"])
+    precio = st.number_input("Precio de venta", min_value=0.0, value=15.0, step=0.5)
+    stock = st.number_input("Stock inicial", min_value=0, value=10, step=1)
+    submit = st.form_submit_button("Guardar Producto")
 
-# --- OPERACIONES CRUD ---
+    if submit and nombre:
+        nuevo_id = st.session_state.inventario['ID'].max() + 1
+        nuevo_item = pd.DataFrame({
+            'ID': [nuevo_id],
+            'Producto': [nombre],
+            'Categoría': [categoria],
+            'Precio (S/)': [precio],
+            'Stock': [stock]
+        })
+        # Agregar el nuevo item al dataframe
+        st.session_state.inventario = pd.concat([st.session_state.inventario, nuevo_item], ignore_index=True)
+        st.sidebar.success(f"¡{nombre} agregado al catálogo!")
 
-@app.get("/productos", response_model=List[Producto], tags=["Productos"])
-def obtener_todos_los_productos():
-    """Devuelve la lista completa de productos."""
-    return inventario
+# --- SECCIÓN SUPERIOR: Métricas clave ---
+col1, col2, col3 = st.columns(3)
 
-@app.get("/productos/{producto_id}", response_model=Producto, tags=["Productos"])
-def obtener_producto_por_id(producto_id: int):
-    """Busca un producto específico por su ID."""
-    for prod in inventario:
-        if prod.id == producto_id:
-            return prod
-    raise HTTPException(status_code=404, detail="Producto no encontrado")
+total_productos = len(st.session_state.inventario)
+# Calcular el valor total multiplicando precio por stock
+valor_total = (st.session_state.inventario['Precio (S/)'] * st.session_state.inventario['Stock']).sum()
+# Contar cuántos productos tienen menos de 15 unidades
+stock_bajo = len(st.session_state.inventario[st.session_state.inventario['Stock'] < 15])
 
-@app.post("/productos", response_model=Producto, tags=["Productos"])
-def crear_nuevo_producto(producto: Producto):
-    """Agrega un nuevo producto al inventario."""
-    nuevo_id = max([p.id for p in inventario]) + 1 if inventario else 1
-    producto.id = nuevo_id
-    producto.fecha_registro = datetime.now()
-    inventario.append(producto)
-    return producto
+col1.metric("Total de Artículos", total_productos)
+col2.metric("Valor del Inventario", f"S/ {valor_total:,.2f}")
+col3.metric("Alertas (Stock < 15)", stock_bajo, delta="- Revisar", delta_color="inverse")
 
-@app.put("/productos/{producto_id}", response_model=Producto, tags=["Productos"])
-def actualizar_producto(producto_id: int, producto_actualizado: Producto):
-    """Actualiza los datos de un producto existente."""
-    for index, prod in enumerate(inventario):
-        if prod.id == producto_id:
-            producto_actualizado.id = producto_id
-            producto_actualizado.fecha_registro = prod.fecha_registro
-            inventario[index] = producto_actualizado
-            return producto_actualizado
-    raise HTTPException(status_code=404, detail="Producto no encontrado")
+st.markdown("---")
 
-@app.delete("/productos/{producto_id}", tags=["Productos"])
-def eliminar_producto(producto_id: int):
-    """Elimina un producto del inventario."""
-    for index, prod in enumerate(inventario):
-        if prod.id == producto_id:
-            inventario.pop(index)
-            return {"mensaje": f"Producto con ID {producto_id} eliminado exitosamente"}
-    raise HTTPException(status_code=404, detail="Producto no encontrado")
+# --- SECCIÓN PRINCIPAL: Tabla y Gráficos ---
+col_tabla, col_grafico = st.columns([1.2, 1])
+
+with col_tabla:
+    st.header("📋 Catálogo Actual")
+    # Mostrar la tabla sin el índice por defecto de Pandas
+    st.dataframe(
+        st.session_state.inventario,
+        use_container_width=True,
+        hide_index=True
+    )
+
+with col_grafico:
+    st.header("📊 Nivel de Stock")
+    # Crear un gráfico de barras con Plotly
+    fig = px.bar(
+        st.session_state.inventario, 
+        x='Producto', 
+        y='Stock', 
+        color='Categoría',
+        text='Stock',
+        title="Unidades disponibles por producto"
+    )
+    # Inclinar los textos del eje X para que se lean mejor
+    fig.update_layout(xaxis_tickangle=-45)
+    st.plotly_chart(fig, use_container_width=True)
+
+# Footer
+st.markdown("---")
+st.caption(f"Reporte interactivo generado el {datetime.now().strftime('%d/%m/%Y %H:%M')}")
